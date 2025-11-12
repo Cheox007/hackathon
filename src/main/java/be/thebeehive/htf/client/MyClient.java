@@ -8,9 +8,9 @@ import be.thebeehive.htf.library.protocol.server.GameEndedServerMessage;
 import be.thebeehive.htf.library.protocol.server.GameRoundServerMessage;
 import be.thebeehive.htf.library.protocol.server.WarningServerMessage;
 
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class MyClient implements HtfClientListener {
     private final DecisionEngine engine = new DecisionEngine();
@@ -40,17 +40,46 @@ public class MyClient implements HtfClientListener {
      */
     @Override
     public void onGameRoundServerMessage(HtfClient client, GameRoundServerMessage msg) throws Exception {
+        // Log current submarine status
+        GameRoundServerMessage.Submarine sub = msg.getOurSubmarine();
+        if (sub != null && sub.getValues() != null) {
+            GameRoundServerMessage.Values v = sub.getValues();
+            System.out.println(String.format("Round %d: Hull: %s/%s, Crew: %s/%s", 
+                msg.getRound(),
+                v.getHullStrength(), v.getMaxHullStrength(),
+                v.getCrewHealth(), v.getMaxCrewHealth()));
+        }
+        
         int cap = Math.min(maxActionsCap, msg.getActions() != null ? msg.getActions().size() : 0);
         List<Long> selected = engine.decideActions(msg, cap);
 
+        // Improved fallback: if no actions selected, pick safest actions
         if (selected.isEmpty() && msg.getActions() != null && !msg.getActions().isEmpty()) {
-            Long fallback = msg.getActions().stream()
-                    .sorted(Comparator.comparing(a -> a.getValues().getHullStrength() == null ? java.math.BigDecimal.ZERO : a.getValues().getHullStrength(), Comparator.reverseOrder()))
+            System.out.println("WARNING: No actions selected by engine, using fallback!");
+            // Try to find the least harmful or most beneficial action
+            List<Long> fallbackList = msg.getActions().stream()
+                    .sorted(Comparator.comparing(a -> {
+                        // Score based on benefits and avoid self-harm
+                        java.math.BigDecimal hull = a.getValues().getHullStrength() != null ? 
+                            a.getValues().getHullStrength() : java.math.BigDecimal.ZERO;
+                        java.math.BigDecimal crew = a.getValues().getCrewHealth() != null ? 
+                            a.getValues().getCrewHealth() : java.math.BigDecimal.ZERO;
+                        java.math.BigDecimal maxHull = a.getValues().getMaxHullStrength() != null ? 
+                            a.getValues().getMaxHullStrength() : java.math.BigDecimal.ZERO;
+                        java.math.BigDecimal maxCrew = a.getValues().getMaxCrewHealth() != null ? 
+                            a.getValues().getMaxCrewHealth() : java.math.BigDecimal.ZERO;
+                        return hull.add(crew).add(maxHull).add(maxCrew);
+                    }, Comparator.reverseOrder()))
+                    .limit(Math.min(3, cap))
                     .map(a -> a.getId())
-                    .findFirst().orElse(null);
-            if (fallback != null) selected = Collections.singletonList(fallback);
+                    .collect(Collectors.toList());
+            
+            if (!fallbackList.isEmpty()) {
+                selected = fallbackList;
+            }
         }
-
+        
+        System.out.println(String.format("Selected %d actions: %s", selected.size(), selected));
         client.send(new SelectActionsClientMessage(msg.getRoundId(), selected));
     }
 
