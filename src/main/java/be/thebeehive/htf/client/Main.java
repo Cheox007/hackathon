@@ -14,7 +14,7 @@ public class Main {
     public static void main(String[] args) throws URISyntaxException {
         HtfClient client = new HtfClient(
                 "wss://htf.b9s.dev/ws",
-                "",
+                "headroom3884",
                 EnvironmentType.SIMULATION,
                 new MyClient()
         );
